@@ -20,7 +20,8 @@ var symbols = []string{
 
 const (
 	duration                = 10 * time.Second // 30 * time.Second
-	minThreshHoldPercentage = 0.02             // 1 equivalent 1%
+	snoozeTime              = 5 * time.Minute
+	minThreshHoldPercentage = 0.02 // 1 equivalent 1%
 )
 
 func StandardDeviation(ps []storage.PriceAPI) (sum, mean, sd float64) {
@@ -43,6 +44,8 @@ func StandardDeviation(ps []storage.PriceAPI) (sum, mean, sd float64) {
 	return
 }
 
+var mapSnooze = make(map[string]int64)
+
 func removeOldPriceRoutine(ram *storage.RamStorage) {
 	ticker := time.NewTicker(duration)
 	for {
@@ -58,13 +61,21 @@ func monitorPrice(ram *storage.RamStorage, tele *bot.TelegramBot, sym string) {
 	for {
 		<-ticker.C
 		ps := ram.GetPricesBySymbol(sym)
+		if len(ps) == 0 {
+			continue
+		}
 		_, mean, sd := StandardDeviation(ps)
 		lastPrice := ps[len(ps)-1]
 		v := (lastPrice.Price - mean) / mean * 100
 		if math.Abs(v) > minThreshHoldPercentage {
-			stg := fmt.Sprintf("%s \n mean: %.2f,\n standard deviation: %.2f,\n last_price: %.2f,\n volatility:  %.5f%%",
-				sym, mean, sd, lastPrice.Price, v)
-			tele.Notify(stg, "")
+			t, ok := mapSnooze[sym]
+			if !ok || t+snoozeTime.Milliseconds() < time.Now().UnixMilli() {
+				stg := fmt.Sprintf("%s \n mean: %.2f,\n standard deviation: %.2f,\n last_price: %.2f,\n volatility:  %.5f%%",
+					sym, mean, sd, lastPrice.Price, v)
+				tele.Notify(stg, "")
+				mapSnooze[sym] = time.Now().UnixMilli()
+			}
+
 		}
 
 	}
